@@ -65,11 +65,14 @@ goal location. And given the number of waypoints, I found the increment/decremen
 needed in the altitude for each consecutive waypoints.
 ##### Phase 2:
 The waypoints that were removed in the first phase was considering them to be 
-in one plane. Now, as the path is 3D I can get some more improvement. 
+in one plane. Now, as the path is 3D, I can get some more improvement. 
 To do this I extracted the 2.5D map by using polygon representation of 
 obstacles and used ray tracing to find out if two points in 3D can be connected. 
 Iterate through the nodes got after pruning the path using the Bresenham algorithm 
-and further removed the redundant nodes in 3D.
+and further removed the redundant nodes in 3D.\
+I could have applied the 3D pruning directly but it's more expensive to apply with large 
+number of nodes. So by applying bresenham algorithm in 2D it reduces the waypoint for 
+3D pruning.
 
 See the difference in the image below. The path in the second image was 
 otherwise not possible because of the obstacle (building) below it.
