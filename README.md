@@ -55,7 +55,7 @@ path with the new one if the new path is less expensive.
 #### 6. Cull waypoints 
 I implemented this step in two phases.
 
-#####Phase 1:
+##### Phase 1:
 To prune the 2D path I implemented the Bresenham algorithm that works with no 
 condition on points p1, p2. This removes a significant amount of redundant 
 waypoints.\
@@ -63,7 +63,7 @@ But after pruning the path I got by running A* on the Voronoi graph was 2D. So
 to get a 3D path I calculated the difference between the altitude of start and 
 goal location. And given the number of waypoints, I found the increment/decrement 
 needed in the altitude for each consecutive waypoints.
-#####Phase 2:
+##### Phase 2:
 The waypoints that were removed in the first phase was considering them to be 
 in one plane. Now, as the path is 3D I can get some more improvement. 
 To do this I extracted the 2.5D map by using polygon representation of 
