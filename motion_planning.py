@@ -5,11 +5,10 @@ from enum import Enum, auto
 import networkx as nx
 import csv
 
-import time
 import numpy as np
 
-from planning_utils import a_star_grid, a_star_graph, heuristic, create_grid, create_grid_and_edges, \
-    find_close_point, prune_path, plot_path, prune_path_3D
+from planning_utils import a_star_graph, heuristic, create_grid_and_edges,find_close_point,\
+    prune_path, prune_path_3d
 from udacidrone import Drone
 from udacidrone.connection import MavlinkConnection
 from udacidrone.messaging import MsgID
@@ -35,6 +34,7 @@ class MotionPlanning(Drone):
         self.waypoints = []
         self.in_mission = True
         self.check_state = {}
+        # Set the global goal to the value passed by user
         self.global_goal = goal
 
         # initial state
@@ -64,7 +64,6 @@ class MotionPlanning(Drone):
     def velocity_callback(self):
         if self.flight_state == States.LANDING:
             if self.global_position[2] - self.global_goal[2] < 0.1:
-                # if abs(-1*self.local_position[2] - self.global_goal[2]) < 0.01:
                 self.disarming_transition()
 
     def state_callback(self):
@@ -191,36 +190,35 @@ class MotionPlanning(Drone):
         t0 = time.time()
         path, path_cost = a_star_graph(G, heuristic, start_node, goal_node)
         print("Time to find the path = ", time.time() - t0, "seconds")
-
         print("Length of path = ", len(path))
         print("Cost of path = ", path_cost)
 
-        # Prune the path
+        # Prune the path in 2D
         t0 = time.time()
         smooth_path = prune_path(path, grid)
         print("Time to prune the path= ", time.time() - t0, "seconds")
         smooth_path.append(grid_goal)  # Add goal the list of path
         print("Length of pruned path = ", len(smooth_path))
 
+        # Find the inc/dec for the required in altitude for each consecutive waypoint
         alt_inc = ((self.global_goal[2] + 1) - start[2]) / (len(smooth_path) -1)
+
         # Convert smooth_path to 3D waypoints
-        waypoints = [[int(smooth_path[i][0] + north_offset), int(smooth_path[i][1] + east_offset),
+        smooth_path = [[int(smooth_path[i][0] + north_offset), int(smooth_path[i][1] + east_offset),
                         int(start_altitude + i*alt_inc), 0] for i in range(len(smooth_path))]
 
-        self.waypoints = waypoints
-        '''# Prune the path in 3D
+
+        # Prune the path in 3D using 2.5D Map representation
         t0 = time.time()
-        final_path = prune_path_3D(smooth_path, polygons)
+        final_path = prune_path_3d(smooth_path, polygons)
         print("Time to prune the 3D path= ", time.time() - t0, "seconds")
         print("Length of pruned 3D path = ", len(final_path))
 
-        # Plot the path
-        #plot_path(grid, smooth_path, grid_start, grid_goal, start_node, goal_node)
-
         # Convert path to waypoints
         waypoints = [[final_path[i][0], final_path[i][1], final_path[i][2], 0] for i in range(len(final_path))]
+
         # Set self.waypoints
-        #self.waypoints = waypoints'''
+        self.waypoints = waypoints
 
         # Sends waypoints to sim (this is just for visualization of waypoints)
         self.send_waypoints()

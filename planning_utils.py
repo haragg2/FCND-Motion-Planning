@@ -2,35 +2,63 @@ from enum import Enum
 from queue import PriorityQueue
 import numpy as np
 from scipy.spatial import Voronoi
-import matplotlib.pyplot as plt
-from sampling import extract_polygons
 from shapely.geometry import Polygon, Point, LineString
 
-def plot_path(grid, path, start, goal, start_node, goal_node):
-    plt.rcParams['figure.figsize'] = 12, 12
-    plt.imshow(grid, origin='lower', cmap='Greys')
 
-    plt.plot([start[1], start_node[1]], [start[0], start_node[0]], 'r-')
-    for i in range(len(path) - 1):
-        p1 = path[i]
-        p2 = path[i + 1]
-        plt.plot([p1[1], p2[1]], [p1[0], p2[0]], 'r-')
-    plt.plot([goal[1], goal_node[1]], [goal[0], goal_node[0]], 'r-')
+class Poly:
 
-    plt.plot(start[1], start[0], 'gx')
-    plt.plot(goal[1], goal[0], 'gx')
+    def __init__(self, coords, height):
+        self._polygon = Polygon(coords)
+        self._height = height
 
-    plt.xlabel('EAST', fontsize=20)
-    plt.ylabel('NORTH', fontsize=20)
-    plt.show()
+    @property
+    def height(self):
+        return self._height
 
-def create_grid(data, drone_altitude, safety_distance):
+    @property
+    def coords(self):
+        return list(self._polygon.exterior.coords)[:-1]
+
+    @property
+    def area(self):
+        return self._polygon.area
+
+    @property
+    def center(self):
+        return (self._polygon.centroid.x, self._polygon.centroid.y)
+
+    def contains(self, point):
+        point = Point(point)
+        return self._polygon.contains(point)
+
+    def crosses(self, other):
+        return self._polygon.crosses(other)
+
+
+def extract_polygons(data):
+    polygons = []
+    for i in range(data.shape[0]):
+        north, east, alt, d_north, d_east, d_alt = data[i, :]
+
+        obstacle = [north - d_north, north + d_north, east - d_east, east + d_east]
+        corners = [(obstacle[0], obstacle[2]), (obstacle[0], obstacle[3]), (obstacle[1], obstacle[3]),
+                   (obstacle[1], obstacle[2])]
+
+        # TODO: Compute the height of the polygon
+        height = alt + d_alt
+
+        p = Poly(corners, height)
+        polygons.append(p)
+
+    return polygons
+
+
+def create_grid_and_edges(data, drone_altitude, safety_distance):
     """
     Returns a grid representation of a 2D configuration space
-    based on given obstacle data, drone altitude and safety distance
-    arguments.
+    along with Voronoi graph edges given obstacle data and the
+    drone's altitude.
     """
-
     # minimum and maximum north coordinates
     north_min = np.floor(np.min(data[:, 0] - data[:, 3]))
     north_max = np.ceil(np.max(data[:, 0] + data[:, 3]))
@@ -41,12 +69,13 @@ def create_grid(data, drone_altitude, safety_distance):
 
     # given the minimum and maximum coordinates we can
     # calculate the size of the grid.
-    north_size = int(np.ceil(north_max - north_min))
-    east_size = int(np.ceil(east_max - east_min))
+    north_size = int(np.ceil((north_max - north_min + 1)))
+    east_size = int(np.ceil((east_max - east_min + 1)))
 
     # Initialize an empty grid
     grid = np.zeros((north_size, east_size))
-
+    # Initialize an empty list for Voronoi points
+    points = []
     # Populate the grid with obstacles
     for i in range(data.shape[0]):
         north, east, alt, d_north, d_east, d_alt = data[i, :]
@@ -59,10 +88,49 @@ def create_grid(data, drone_altitude, safety_distance):
             ]
             grid[obstacle[0]:obstacle[1]+1, obstacle[2]:obstacle[3]+1] = 1
 
-    return grid, int(north_min), int(east_min)
+            # add center of obstacles to points list
+            points.append([north - north_min, east - east_min])
+
+    # create a voronoi graph based on location of obstacle centres
+    graph = Voronoi(points)
+    polygons = extract_polygons(data)
+
+    # check each edge from graph.ridge_vertices for collision
+    edges = []
+    print("start building edges")
+    print(len(graph.ridge_vertices))
+
+    for v in graph.ridge_vertices:
+
+        p1 = tuple(graph.vertices[v[0]])
+        p2 = tuple(graph.vertices[v[1]])
+        # If any of the vertices is out of grid then skip
+        if np.amin(p1) < 0 or np.amin(p2) < 0 or p1[0] >= grid.shape[0] or p1[1] >= grid.shape[1] or p2[0] >= grid.shape[0] or p2[1] >= grid.shape[1]:
+            continue
+
+        safe = True
+        cells = bres((int(p1[0]), int(p1[1])), (int(p2[0]), int(p2[1])))
+
+        # Test each pair p1 and p2 for collision using Bresenham
+        # If the edge does not hit an obstacle
+        # add it to the list
+
+        for c in cells:
+            # First check if we're off the map
+            if np.amin(c) < 0 or c[0] >= grid.shape[0] or c[1] >= grid.shape[1]:
+                safe = False
+                break
+            # Next check if we're in collision
+            if grid[c[0], c[1]] == 1:
+                safe = False
+                break
+        if safe:
+            edges.append((p1, p2))
+    print("done building edges")
+    return grid, edges, polygons, int(north_min), int(east_min)
 
 
-# Assume all actions cost the same.
+# Action class with diagonal motions.
 class Action(Enum):
     """
     An action is represented by a 3 element tuple.
@@ -122,6 +190,10 @@ def valid_actions(grid, current_node):
     return valid_actions
 
 
+def heuristic(position, goal_position):
+    return np.linalg.norm(np.array(position) - np.array(goal_position))
+
+
 def a_star_grid(grid, heuristic_func, start, goal):
     """
     Given a grid and heuristic function returns
@@ -177,10 +249,11 @@ def a_star_grid(grid, heuristic_func, start, goal):
         print('**********************')
     return path[::-1], path_cost
 
+
+# A* implementation for graph search
 def a_star_graph(graph, heuristic, start, goal):
     """Modified A* to work with NetworkX graphs."""
 
-    path = []
     queue = PriorityQueue()
     queue.put((heuristic(start, goal), start))
     visited = set()
@@ -202,17 +275,17 @@ def a_star_graph(graph, heuristic, start, goal):
         else:
             for next_node in graph.adj[current_node]:
                 cost = graph.edges[current_node, next_node]['weight']
-                # TODO: calculate new cost, c + g() + heuristic_func()
-
-                cost_so_far = current_cost + cost - heuristic(current_node, goal)
+                # Remove the heuristic cost from the current cost
+                cost_so_far = (current_cost - heuristic(current_node, goal)) + cost
                 new_cost = cost_so_far + heuristic(next_node, goal)
                 if next_node not in visited:
+                    # Check if we found a less expensive path than the old one
                     if next_node in branch:
                         if cost_so_far < branch[next_node][0]:
-                            queue.put((new_cost,next_node))
+                            queue.put((new_cost, next_node))
                             branch[next_node] = (cost_so_far, current_node)
                     else:
-                        queue.put((new_cost,next_node))
+                        queue.put((new_cost, next_node))
                         branch[next_node] = (cost_so_far, current_node)
 
     path = []
@@ -232,120 +305,118 @@ def a_star_graph(graph, heuristic, start, goal):
         print('**********************')
     return path[::-1], path_cost
 
-def heuristic(position, goal_position):
-    return np.linalg.norm(np.array(position) - np.array(goal_position))
-
 
 def bres(p1, p2):
     """
-    Note this solution requires `x1` < `x2` and `y1` < `y2`.
+    This solution requires no condition on points p1 and p2.
     """
     xi, yi = p1
     x2, y2 = p2
-    cells = [(xi,yi)]
+    cells = [(xi, yi)]
 
-    # TODO: Determine valid grid cells
+    # Slope is calculated once only if it's possible
     if xi != x2:
-        m = (y2-yi)/(x2-xi) #slope calculated once
+        m = (y2-yi)/(x2-xi)
         delta_y = m
         x1 = xi
         y1 = yi + 0.5 - m*0.5
 
-    if xi<x2 and yi<=y2:
-        x = xi + 1
-        y = yi
-        inc_y = y1 + delta_y
-        while x<x2+1 or y<y2:
-            if inc_y > y + 1:
-                y += 1
-            elif inc_y == y + 1:
-                y += 1
-                x += 1
-                delta_y += m
-            else:
-                x += 1
-                delta_y += m
-            cells.append((x-1,y))
+        if x1 < x2 and yi <= y2:
+            x = x1 + 1
+            y = yi
             inc_y = y1 + delta_y
+            while x < x2 + 1 or y < y2:
+                if inc_y > y + 1:
+                    y += 1
+                elif inc_y == y + 1:
+                    y += 1
+                    x += 1
+                    delta_y += m
+                else:
+                    x += 1
+                    delta_y += m
+                cells.append((x - 1, y))
+                inc_y = y1 + delta_y
 
-    elif xi<x2 and yi>=y2:
-        x = xi + 1
-        y = yi
-        inc_y = y1 + delta_y
-        while x<x2+1 or y>y2:
-            if inc_y < y:
-                y -= 1
-            elif inc_y == y:
-                y -= 1
-                x += 1
-                delta_y += m
-            else:
-                x += 1
-                delta_y += m
-            cells.append((x-1,y))
+        elif x1 < x2 and yi >= y2:
+            x = x1 + 1
+            y = yi
             inc_y = y1 + delta_y
+            while x < x2 + 1 or y > y2:
+                if inc_y < y:
+                    y -= 1
+                elif inc_y == y:
+                    y -= 1
+                    x += 1
+                    delta_y += m
+                else:
+                    x += 1
+                    delta_y += m
+                cells.append((x - 1, y))
+                inc_y = y1 + delta_y
 
-    elif xi>x2 and yi>y2:
-        x = xi
-        y = yi
-        inc_y = y1
-        delta_y = 0
-        while x>x2 or y>y2:
-            if inc_y < y:
-                y -= 1
-            elif inc_y == y:
-                y -= 1
-                x -= 1
-                delta_y -= m
-            else:
-                x -= 1
-                delta_y -= m
-            cells.append((x,y))
-            inc_y = y1 + delta_y
+        elif x1 > x2 and yi > y2:
+            x = x1
+            y = yi
+            inc_y = y1
+            delta_y = 0
+            while x > x2 or y > y2:
+                if inc_y < y:
+                    y -= 1
+                elif inc_y == y:
+                    y -= 1
+                    x -= 1
+                    delta_y -= m
+                else:
+                    x -= 1
+                    delta_y -= m
+                cells.append((x, y))
+                inc_y = y1 + delta_y
 
-    elif xi>x2 and yi<=y2:
-        x = xi
-        y = yi
-        inc_y = y1
-        delta_y = 0
-        while x>x2 or y<y2:
-            if inc_y > y+1:
-                y += 1
-            elif inc_y == y + 1:
-                y += 1
-                x -= 1
-                delta_y -= m
-            else:
-                x -= 1
-                delta_y -= m
-            cells.append((x,y))
-            inc_y = y1 + delta_y
+        elif x1 > x2 and yi <= y2:
+            x = x1
+            y = yi
+            inc_y = y1
+            delta_y = 0
+            while x > x2 or y < y2:
+                if inc_y > y + 1:
+                    y += 1
+                elif inc_y == y + 1:
+                    y += 1
+                    x -= 1
+                    delta_y -= m
+                else:
+                    x -= 1
+                    delta_y -= m
+                cells.append((x, y))
+                inc_y = y1 + delta_y
 
-
-    elif xi == x2:
+    else:
         y=yi
         if y2 >= yi:
-            while y<y2+1:
-                cells.append((xi,y))
+            while y < y2+1:
+                cells.append((xi, y))
                 y += 1
         else:
             while y>y2:
-                cells.append((xi,y-1))
+                cells.append((xi, y-1))
                 y -= 1
 
     return np.array(cells)
 
 
+# Uses Bresenham algorithm to check if two points are safe to connect in 2D grid
 def is_safe(p1, p2, grid):
     safe  = True
     cells = bres(p1, p2)
     for c in cells:
-        if grid[c[0],c[1]] == 1:
+        if grid[c[0], c[1]] == 1:
             safe = False
             break
     return safe
 
 
+# Uses polygon representation of obstacles to check if two points in 3D can be connected
 def can_connect(p1, p2, polygons):
     line = LineString([p1, p2])
     slope = (abs(p2[2] - p1[2]))/np.linalg.norm([p1[0]-p2[0], p1[1]- p2[1]])
@@ -359,87 +430,8 @@ def can_connect(p1, p2, polygons):
                 return False
     return True
 
-def create_grid_and_edges(data, drone_altitude, safety_distance):
-    """
-    Returns a grid representation of a 2D configuration space
-    along with Voronoi graph edges given obstacle data and the
-    drone's altitude.
-    """
-    # minimum and maximum north coordinates
-    north_min = np.floor(np.min(data[:, 0] - data[:, 3]))
-    north_max = np.ceil(np.max(data[:, 0] + data[:, 3]))
 
-    # minimum and maximum east coordinates
-    east_min = np.floor(np.min(data[:, 1] - data[:, 4]))
-    east_max = np.ceil(np.max(data[:, 1] + data[:, 4]))
-
-    # given the minimum and maximum coordinates we can
-    # calculate the size of the grid.
-    north_size = int(np.ceil((north_max - north_min + 1)))
-    east_size = int(np.ceil((east_max - east_min + 1)))
-
-    # Initialize an empty grid
-    grid = np.zeros((north_size, east_size))
-    # Initialize an empty list for Voronoi points
-    points = []
-    # Populate the grid with obstacles
-    for i in range(data.shape[0]):
-        north, east, alt, d_north, d_east, d_alt = data[i, :]
-        if alt + d_alt + safety_distance > drone_altitude:
-            obstacle = [
-                int(np.clip(north - d_north - safety_distance - north_min, 0, north_size-1)),
-                int(np.clip(north + d_north + safety_distance - north_min, 0, north_size-1)),
-                int(np.clip(east - d_east - safety_distance - east_min, 0, east_size-1)),
-                int(np.clip(east + d_east + safety_distance - east_min, 0, east_size-1)),
-            ]
-            grid[obstacle[0]:obstacle[1]+1, obstacle[2]:obstacle[3]+1] = 1
-
-            # add center of obstacles to points list
-            points.append([north - north_min, east - east_min])
-
-    # create a voronoi graph based on location of obstacle centres
-    graph = Voronoi(points)
-    polygons = extract_polygons(data)
-
-    # check each edge from graph.ridge_vertices for collision
-    edges = []
-    print("start building edges")
-    print(len(graph.ridge_vertices))
-
-    i=0
-    for v in graph.ridge_vertices:
-
-        i=i+1
-        #print(i)
-        p1 = tuple(graph.vertices[v[0]])
-        p2 = tuple(graph.vertices[v[1]])
-        #check if node of any vertice is out of grid then skip
-        if np.amin(p1) < 0 or np.amin(p2) < 0 or p1[0] >= grid.shape[0] or p1[1] >= grid.shape[1] or p2[0] >= grid.shape[0] or p2[1] >= grid.shape[1]:
-            continue
-
-
-        safe  = True
-        cells = bres((int(p1[0]), int(p1[1])), (int(p2[0]), int(p2[1])))
-
-        # Test each pair p1 and p2 for collision using Bresenham
-        # If the edge does not hit an obstacle
-        # add it to the list
-
-        for c in cells:
-            # First check if we're off the map
-            if np.amin(c) < 0 or c[0] >= grid.shape[0] or c[1] >= grid.shape[1]:
-                safe = False
-                break
-            # Next check if we're in collision
-            if grid[c[0], c[1]] == 1:
-                safe = False
-                break
-        if safe:
-            edges.append((p1, p2))
-    print("done building edges")
-    return grid, edges, polygons, int(north_min), int(east_min)
-
-#This will prune the path using Bresenham in 2D
+# This will prune the path using Bresenham algorithm in 2D grid
 def prune_path(path, grid):
     i = 1
     pruned_path = [path[0]]
@@ -458,8 +450,9 @@ def prune_path(path, grid):
     pruned_path.append(prev_safe_path)
     return pruned_path
 
-#This will prune the path using Bresenham in 2D
-def prune_path_3D(path, polygon):
+
+# This will prune the path in 3D
+def prune_path_3d(path, polygon):
     i = 1
     pruned_path = [path[0]]
     x1, y1, z1 = path[0][0], path[0][1], path[0][2]
@@ -477,6 +470,8 @@ def prune_path_3D(path, polygon):
     pruned_path.append(list(prev_safe_path))
     return pruned_path
 
+
+# Return the closest node on graph to the given point in 2D grid
 def find_close_point(graph, point):
     closest_pt = None
     shortest_dis = 10000000
