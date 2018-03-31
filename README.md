@@ -1,5 +1,5 @@
 ## Project: 3D Motion Planning
-![Path Image](./misc/motion_planner.png)
+![Path Image](./images/motion_planner.png)
 
 ---
 ### Writeup / README
@@ -16,7 +16,7 @@ The A* algorithm implemented does not include diagonal actions which results the
 
 And here's how the path looks like when diagonal actions are added to
 the action space.
-![Top Down View](./misc/diagonal.png)
+![Top Down View](./images/diagonal.png)
 
 ### Implementing Your Path Planning Algorithm
 
@@ -70,8 +70,9 @@ redundant nodes in 3D.
 
 See the difference in the image below. The path in the second image was otherwise not possible 
 because of the obstacle (building) below it.
-![2D Pruned Path](./misc/2d_prune.png)
-![3D Pruned Path](./misc/3d_prune.png)
+![2D Pruned Path](./images/2d_prune.png)
+![3D Pruned Path](./images/3d_prune.png)
 ### Execute the flight
 #### 1. Does it work?
-It works!
+The path planner works in 3D and can be used to find a 
+path from start to goal located at different altitudes.
