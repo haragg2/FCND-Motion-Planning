@@ -35,17 +35,18 @@ class Poly:
         return self._polygon.crosses(other)
 
 
-def extract_polygons(data):
+def extract_polygons(data, safety_distance):
     polygons = []
     for i in range(data.shape[0]):
         north, east, alt, d_north, d_east, d_alt = data[i, :]
 
-        obstacle = [north - d_north, north + d_north, east - d_east, east + d_east]
+        obstacle = [north - d_north - safety_distance, north + d_north + safety_distance,
+                    east - d_east - safety_distance, east + d_east + safety_distance]
         corners = [(obstacle[0], obstacle[2]), (obstacle[0], obstacle[3]), (obstacle[1], obstacle[3]),
                    (obstacle[1], obstacle[2])]
 
         # TODO: Compute the height of the polygon
-        height = alt + d_alt
+        height = alt + d_alt + safety_distance
 
         p = Poly(corners, height)
         polygons.append(p)
@@ -93,7 +94,7 @@ def create_grid_and_edges(data, drone_altitude, safety_distance):
 
     # create a voronoi graph based on location of obstacle centres
     graph = Voronoi(points)
-    polygons = extract_polygons(data)
+    polygons = extract_polygons(data, safety_distance)
 
     # check each edge from graph.ridge_vertices for collision
     edges = []
@@ -417,17 +418,11 @@ def is_safe(p1, p2, grid):
 
 
 # Uses polygon representation of obstacles to check if two points in 3D can be connected
-def can_connect(p1, p2, polygons):
-    line = LineString([p1, p2])
-    slope = (abs(p2[2] - p1[2]))/np.linalg.norm([p1[0]-p2[0], p1[1]- p2[1]])
-    z = min(p2[2], p1[2])
-    x, y = ((p1[0], p1[1]), (p2[0], p2[1]))[z in p2]
-    for polygon in polygons:
-        if polygon.crosses(line):
-            point = polygon.center
-            height_line = z + slope*np.linalg.norm(np.array([point[0],point[1]]) - np.array([x, y]))
-            if height_line <= polygon.height:
-                return False
+def can_connect(n1, n2, polygons):
+    line = LineString([n1, n2])
+    for p in polygons:
+        if p.crosses(line) and p.height >= min(n1[2], n2[2]):
+            return False
     return True
 
 
