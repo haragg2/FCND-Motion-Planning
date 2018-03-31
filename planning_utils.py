@@ -418,16 +418,22 @@ def is_safe(p1, p2, grid):
 
 
 # Uses polygon representation of obstacles to check if two points in 3D can be connected
-def can_connect(n1, n2, polygons):
-    line = LineString([n1, n2])
-    for p in polygons:
-        if p.crosses(line) and p.height >= min(n1[2], n2[2]):
-            return False
+def can_connect(p1, p2, polygons):
+    line = LineString([p1, p2])
+    slope = (abs(p2[2] - p1[2]))/np.linalg.norm([p1[0]-p2[0], p1[1]- p2[1]])
+    z = min(p2[2], p1[2])
+    x, y = ((p1[0], p1[1]), (p2[0], p2[1]))[z in p2]
+    for polygon in polygons:
+        if polygon.crosses(line):
+            point = polygon.center
+            height_line = z + slope*np.linalg.norm(np.array([point[0],point[1]]) - np.array([x, y]))
+            if height_line < polygon.height:
+                return False
     return True
 
 
 # This will prune the path using Bresenham algorithm in 2D grid
-def prune_path(path, grid):
+def prune_path_2d(path, grid):
     i = 1
     pruned_path = [path[0]]
     x1, y1 = path[0][0], path[0][1]
