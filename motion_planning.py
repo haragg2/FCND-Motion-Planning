@@ -7,7 +7,7 @@ import csv
 
 import numpy as np
 
-from planning_utils import a_star_graph, heuristic, create_grid_and_edges,find_close_point,\
+from planning_utils import a_star_graph, heuristic, create_grid_and_edges, find_close_point, \
     prune_path, prune_path_3d
 from udacidrone import Drone
 from udacidrone.connection import MavlinkConnection
@@ -126,7 +126,7 @@ class MotionPlanning(Drone):
         self.flight_state = States.PLANNING
         print("Searching for a path ...")
         TAKEOFF_ALTITUDE = 5
-        SAFETY_DISTANCE = 2
+        SAFETY_DISTANCE = 4
 
         # Set the takeoff altitude
         self.target_position[2] = TAKEOFF_ALTITUDE
@@ -193,24 +193,27 @@ class MotionPlanning(Drone):
         print("Length of path = ", len(path))
         print("Cost of path = ", path_cost)
 
-        # Prune the path in 2D
-        t0 = time.time()
-        smooth_path = prune_path(path, grid)
-        print("Time to prune the path= ", time.time() - t0, "seconds")
-        smooth_path.append(grid_goal)  # Add goal the list of path
-        print("Length of pruned path = ", len(smooth_path))
+        path.append(grid_goal)
 
         # Find the inc/dec for the required in altitude for each consecutive waypoint
-        alt_inc = ((self.global_goal[2] + 1) - start[2]) / (len(smooth_path) -1)
+        alt_inc = ((self.global_goal[2] + SAFETY_DISTANCE + 1) - start[2]) / (len(path) - 2)
 
         # Convert smooth_path to 3D waypoints
-        smooth_path = [[int(smooth_path[i][0] + north_offset), int(smooth_path[i][1] + east_offset),
-                        int(start_altitude + i*alt_inc), 0] for i in range(len(smooth_path))]
+        temp_path = [[int(path[i][0] + north_offset), int(path[i][1] + east_offset),
+                      int(start_altitude + i * alt_inc)] for i in range(len(path) - 1)]
 
+        # Add the goal point to the 3D list with altitude equal to previous waypoint.
+        # So that drone can move from final waypoint to goal by moving at same altitude.
+        temp_path.append([int(path[-1][0] + north_offset), int(path[-1][1] + east_offset),
+                          temp_path[-1][2]])
+
+        path = temp_path
+
+        print(path)
 
         # Prune the path in 3D using 2.5D Map representation
         t0 = time.time()
-        final_path = prune_path_3d(smooth_path, polygons)
+        final_path = prune_path_3d(path, polygons)
         print("Time to prune the 3D path= ", time.time() - t0, "seconds")
         print("Length of pruned 3D path = ", len(final_path))
 
